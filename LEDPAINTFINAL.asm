@@ -1,0 +1,548 @@
+ORG 00h
+LJMP MAIN
+;-------DISPLAY REGISTERS-----
+	REDROW1 EQU 30H
+	REDROW2 EQU 31H
+	REDROW3 EQU 32H
+	REDROW4 EQU 33H
+	REDROW5 EQU 34H
+	REDROW6 EQU 35H
+	REDROW7 EQU 36H
+	REDROW8 EQU 37H
+	
+	BLUEROW1 EQU 38H
+	BLUEROW2 EQU 39H
+	BLUEROW3 EQU 3AH
+	BLUEROW4 EQU 3BH
+	BLUEROW5 EQU 3CH
+	BLUEROW6 EQU 3DH
+	BLUEROW7 EQU 3EH
+	BLUEROW8 EQU 3FH
+
+	GREENROW1 EQU 40H
+	GREENROW2 EQU 41H
+	GREENROW3 EQU 42H
+	GREENROW4 EQU 43H
+	GREENROW5 EQU 44H
+	GREENROW6 EQU 45H
+	GREENROW7 EQU 46H
+	GREENROW8 EQU 47H
+;---VARIABLE INITIALIZATION---
+	CURSOR_X EQU 4Bh
+	CURSOR_Y EQU 4Ch
+	
+	CURSOR_COUNTER 	EQU 4Eh
+	SPEED_COUNTER 	EQU 4Fh
+	CRSR_CONTROL 	BIT 23h.4
+	SPEED_CONTROL 	BIT 23h.5
+	
+	X_MOV EQU 02H
+	Y_MOV EQU 03H
+	COLOR EQU 20H
+	
+	EX_COLOR_R BIT 21h.0
+	EX_COLOR_G BIT 21h.1
+	EX_COLOR_B BIT 21h.2	
+
+	BUTTON BIT 24h.3
+
+	VCCENABLE BIT P3.4
+;---INITIALIZATION--------------
+ORG 0013h
+ISRX1:
+	ACALL CLEARALL
+	RETI 
+	
+MAIN:	CLR VCCENABLE
+
+	MOV IE, #10000100b
+	SETB IT1
+	
+	MOV TMOD, #02h
+	
+	MOV CURSOR_X, #3
+	MOV CURSOR_Y, #4
+
+	MOV Y_MOV, #0
+	MOV X_MOV, #0
+	
+	MOV CURSOR_COUNTER, #1
+	MOV SPEED_COUNTER, #1
+
+	MOV 21h, #0
+	
+	CLR EX_COLOR_R
+	CLR EX_COLOR_G
+	CLR EX_COLOR_B
+
+	MOV COLOR, #0
+
+	CLR CRSR_CONTROL
+	
+	MOV R0, #30h
+	MOV R1, #24
+BACK:
+	MOV @R0, #0
+	INC R0
+	DJNZ R1, BACK
+
+;-------------------------------
+;------INITIAL DISPLAY---------
+	MOV REDROW1, #00000001b
+	MOV REDROW2, #00000001b
+	MOV REDROW3, #00101001b
+	MOV REDROW4, #00111101b
+	MOV REDROW5, #10000001b
+	MOV REDROW6, #10000001b
+	MOV REDROW7, #10111100b
+	MOV REDROW8, #00100100b
+	
+	MOV BLUEROW1, #01111000b
+	MOV BLUEROW2, #00111100b
+	MOV BLUEROW3, #00101000b
+	MOV BLUEROW4, #00110100b
+	MOV BLUEROW5, #01111111b
+	MOV BLUEROW6, #00111100b
+	MOV BLUEROW7, #00000000b
+	MOV BLUEROW8, #00000000b
+
+	MOV GREENROW1, #00000001b
+	MOV GREENROW2, #00000001b
+	MOV GREENROW3, #00010101b
+	MOV GREENROW4, #00000001b
+	MOV GREENROW5, #00000000b
+	MOV GREENROW6, #00000001b
+	MOV GREENROW7, #00111100b
+	MOV GREENROW8, #00000000b
+	
+;----------------------------------
+	
+;MULTIPLEXING ACCORDING TO BYTES 30H - 47H
+NXTFRAME:MOV R5, #8
+
+;---GETS COPY OF RGB BYTES------
+	MOV R1, REDROW1
+	MOV R2, BLUEROW1
+	MOV R3, GREENROW1
+NXTROW:	
+	MOV R0, 1
+	MOV 48h, @R0
+	
+	MOV R0, 2
+	MOV 49h, @R0
+	
+	MOV R0, 3
+	MOV 4Ah, @R0
+;---------------------------------
+;---PRINTS EACH BIT IN A ROW------
+	MOV A, #8
+	CLR C
+	SUBB A, R5
+
+	MOV 28h, A
+;INITIALIZATION FOR NXTCOLUMN LOOP
+	CLR C
+	MOV R4, #8
+;---------------------------------
+NXTCOLUMN:
+	DEC R4
+	MOV 25h, R4
+	INC R4
+
+	MOV A, 4Ah
+	RRC A
+	MOV 25h.5, C
+	MOV 4Ah, A
+
+	MOV A, 49h
+	RRC A
+	MOV 25h.4, C
+	MOV 49h, A
+
+	MOV A, 48h
+	RRC A
+	MOV 25h.3, C
+	MOV 48h, A
+
+	MOV P2, 25h
+
+	MOV C, 28h.1
+	MOV P2.6, C
+
+	MOV C, 28h.2
+	MOV P2.7, C
+
+	MOV C, 28h.0
+	MOV P1.7, C
+
+	SETB VCCENABLE
+
+	ACALL DELAYLED
+
+	CLR VCCENABLE
+
+	DJNZ R4, NXTCOLUMN
+;-------------------------------
+;---PREPARATION FOR NEXT ROW----
+	INC R1
+	INC R2
+	INC R3
+
+	DJNZ R5, NXTROW
+;-------------------------------
+;------GET DATA FROM SENSORS AND UPDATE DISPLAY REGISTERS
+	LCALL GET_AD
+
+	LCALL UPDATE_CURSOR
+
+CRSR_ON: 
+;-----------------------------------
+	AJMP NXTFRAME
+;-------------------------------
+
+;---UPDATES CURSOR COLOR AND LOCATION
+UPDATE_CURSOR:
+	JNB BUTTON, NPAINT
+	
+	MOV A, COLOR
+	MOV C, ACC.2
+	MOV 24h.4, C
+	MOV C, ACC.0
+	MOV ACC.2, C
+	
+	MOV C, 24h.4
+	MOV ACC.0, C
+	
+	MOV 21h, A
+	
+NPAINT:
+	DEC SPEED_COUNTER
+	MOV A, SPEED_COUNTER
+	JNZ GETMOV
+	MOV SPEED_COUNTER, #48
+	SETB SPEED_CONTROL
+	
+GETMOV:	DEC CURSOR_COUNTER
+	MOV A, CURSOR_COUNTER
+	JNZ CMPL
+	MOV CURSOR_COUNTER, #32
+	CPL CRSR_CONTROL
+CMPL:	
+	JNB SPEED_CONTROL, NOTMOV
+	MOV A, X_MOV
+	ORL A, Y_MOV
+	JZ NOTMOV
+
+	ACALL UPDATE
+	MOV A, X_MOV
+	ADD A, CURSOR_X
+	CJNE A, #8, GTX1
+	MOV CURSOR_X, #0
+	SJMP CRSRX_READY
+GTX1:	CJNE A, #0FFh, GTX2
+	MOV CURSOR_X, #7
+	SJMP CRSRX_READY
+	
+GTX2:	MOV CURSOR_X, A
+	
+CRSRX_READY:
+	
+
+	MOV A, Y_MOV
+	ADD A, CURSOR_Y
+	CJNE A, #8, GTY1
+	MOV CURSOR_Y, #0
+	SJMP CRSRY_READY
+GTY1:	CJNE A, #0FFh, GTY2
+	MOV CURSOR_Y, #7
+	SJMP CRSRY_READY
+	
+GTY2:	MOV CURSOR_Y, A
+	
+CRSRY_READY:
+
+	MOV C, COLOR.2
+	MOV EX_COLOR_R, C
+
+	MOV C, COLOR.1
+	MOV EX_COLOR_G, C
+
+	MOV C, COLOR.0
+	MOV EX_COLOR_B, C
+
+	ACALL UPDATE
+	CLR SPEED_CONTROL
+	SJMP UPDTFIN
+	
+NOTMOV:
+	PUSH 21h
+
+	JB CRSR_CONTROL, ON
+	
+	CLR EX_COLOR_B
+	CLR EX_COLOR_R
+	CLR EX_COLOR_G
+	SJMP BLINK
+
+ON:		
+	MOV C, COLOR.2
+	MOV EX_COLOR_R, C
+
+	MOV C, COLOR.1
+	MOV EX_COLOR_G, C
+
+	MOV C, COLOR.0
+	MOV EX_COLOR_B, C
+
+BLINK:	
+	ACALL UPDATE
+	POP 21h
+	
+UPDTFIN:RET
+;------------------------------------
+
+UPDATE:	
+	PUSH 0
+	PUSH 1
+	
+	MOV R1, #30h
+NEXT_CLR:MOV A, CURSOR_Y
+	ADD A, R1
+
+	MOV R0, A
+	MOV A, @R0
+
+	MOV R7, CURSOR_X
+	
+	CJNE R7, #0, NZERO1
+	SJMP ZERO1
+NZERO1:	PUSH CURSOR_X
+	
+RETURN1:RL A
+	DJNZ CURSOR_X,RETURN1
+
+	POP CURSOR_X
+
+ZERO1:	CLR C
+	RLC A
+
+	MOV 22h.0, C
+	MOV C, EX_COLOR_R
+	MOV 22H.1, C
+	MOV C, 22h.0
+	MOV EX_COLOR_R, C
+	MOV C, 22h.1
+
+	RRC A
+
+	MOV R7, CURSOR_X
+	
+	CJNE R7, #0, NZERO2
+	SJMP ZERO2
+	
+NZERO2:	PUSH CURSOR_X
+	
+RETURN2:RR A
+	DJNZ CURSOR_X,RETURN2
+
+	POP CURSOR_X
+ZERO2:
+	MOV @R0, A
+
+	CJNE R1, #40h, NXT_CLR
+	MOV A, 21h
+	RL A
+	RL A
+	MOV 21h, A
+
+	POP 1
+	POP 0
+	
+	RET
+NXT_CLR:
+	MOV A, #8h
+	ADD A, R1
+	MOV R1, A
+
+	MOV A, 21h
+	RR A
+	MOV 21h, A
+	SJMP NEXT_CLR
+	
+;--DELAY 0.312MS TO GET 50FPS--
+DELAYLED: 
+	CLR TR0
+	MOV TL0, #0
+	SETB TR0
+
+	CLR TF0
+	JNB TF0,$
+	
+	RET
+;-------------------------------	
+CLEARALL:
+
+	CLR EX_COLOR_R
+	CLR EX_COLOR_G
+	CLR EX_COLOR_B
+	
+	PUSH 4
+	PUSH 0
+	
+	MOV R4, #24
+	MOV R0, #30h
+
+DLT:	MOV @R0,#0
+	INC R0
+	DJNZ R4, DLT
+	
+	POP 0
+	POP 4
+	RET
+
+; Triple ADC 3x1
+; Author Safa Ozturk based on the code written by Lee Studley
+; Tested with a AT89S51	(8031) micro clocked @ 11.0592mhz
+; This test uses a â€™bit bangingâ€™ approach yielding a conversion time
+; of approximately 99uS adn the read bits tested with LED's on 2nd and 3rd ports
+;================= PROGRAM VARIABLES =================
+COUNTA 	EQU 70H
+ADRESLX EQU 2
+ADRESHX	EQU 3
+ADRESLY	EQU 4
+ADRESHY	EQU 5
+ADRESLC	EQU 6
+ADRESHC	EQU 7
+;================= HARDWARE EQUATES =================
+DCLK 	EQU P1.3
+SDATX 	EQU P1.5
+SDATY	EQU P1.4
+SDATC	EQU P1.2
+CS 	EQU P1.1
+KEY	EQU P1.0
+RED	EQU P3.0
+GREEN	EQU P3.1
+BLUE	EQU P3.2
+;================= PROGRAM CODE =================
+
+;====================================================================
+; GET_AD: Initiates the A/D conversion and retreives the AD sample into
+; ADRESH,ADRESL.
+; The A/D convertor is connected to port1 pins 0..2 as:
+; SDAT EQU P1.0 I/O
+; DCLK EQU P1.1 I/O
+; CS EQU P1.2 I/O
+; Uses: ADRESL,ADRESH,ACC,COUNTA
+; Exits: ADRESH=(x,x,x,x,B11..B8), ADRESL(B7..B0,)
+;====================================================================
+GET_AD: SETB CS ; set cs hi
+	; GETTING COLOR VALUE FROM SOFTPOT
+	MOV R0, #6FH
+NEXTC:	MOV COUNTA,#15	; number of bits to shift 12+X,X,NULL=15
+NXTBITC:CLR DCLK	; X,X,NULL,D11,D10,D9...D0
+ 	CLR CS		; CS low to start conversion or keep low till done
+	SETB DCLK	; raise the clock
+	MOV C,SDATC	; put data into C flag
+	RLC A		; shift C into Acc (A/D low bits)
+	XCH A,ADRESHC	; get ADRESH byte(sav low bits in ADRESH for now)
+	RLC A		; shift C into Acc (A/D high bits)
+	XCH A,ADRESHC	; get low bits back into Acc for next loop
+	DJNZ COUNTA,NXTBITC
+	MOV ADRESLC,A	; put A into ADRESL
+	ANL ADRESHC,#0FH; mask off unwanted bits (x,X,X,Null
+	SETB CS 	; set CS hi to end conversion
+	MOV @R0, ADRESHC
+	DEC R0
+	CJNE R0, #65H, NEXTC
+	; GETTING X VALUE FORM JOYSTICK
+	MOV COUNTA,#15
+NXTBITX:CLR DCLK	; X,X,NULL,D11,D10,D9...D0
+ 	CLR CS		; CS low to start conversion or keep low till done
+	SETB DCLK	; raise the clock
+	MOV C,SDATX	; put data into C flag
+	RLC A		; shift C into Acc (A/D low bits)
+	XCH A,ADRESHX	; get ADRESH byte(sav low bits in ADRESH for now)
+	RLC A		; shift C into Acc (A/D high bits)
+	XCH A,ADRESHX	; get low bits back into Acc for next loop
+	DJNZ COUNTA,NXTBITX
+	MOV ADRESLX,A	; put A into ADRESL
+	ANL ADRESHX,#0FH; mask off unwanted bits (x,X,X,Null
+	SETB CS		; set CS hi to end conversion
+
+	; GETTING Y VALUE FORM JOYSTICK
+	MOV COUNTA,#15
+NXTBITY:CLR DCLK	; X,X,NULL,D11,D10,D9...D0
+ 	CLR CS		; CS low to start conversion or keep low till done
+	SETB DCLK	; raise the clock
+	MOV C,SDATY	; put data into C flag
+	RLC A		; shift C into Acc (A/D low bits)
+	XCH A,ADRESHY	; get ADRESH byte(sav low bits in ADRESH for now)
+	RLC A		; shift C into Acc (A/D high bits)
+	XCH A,ADRESHY	; get low bits back into Acc for next loop
+	DJNZ COUNTA,NXTBITY
+	MOV ADRESLY,A	; put A into ADRESL
+	ANL ADRESHY,#0FH; mask off unwanted bits (x,X,X,Null
+	SETB CS		; set CS hi to end conversion
+
+;=END__GET_AD========================================================
+
+; GET THE HIGHEST 1ST & 2ND ORDER BITS FROM  XY-ADC VALUES
+	CLR A
+	ANL ADRESHX, #00001100B
+	ANL ADRESHY, #00001100B
+	MOV A, ADRESHX
+	CJNE A, #00001100B, X1
+	MOV R2, #01H
+	SJMP X3
+X1:	CJNE A, #00000000B, X2
+	MOV R2, #0FFH
+	SJMP X3
+X2:	CJNE A, #00001000B, X2A
+	MOV R2, #00H
+	SJMP X3
+X2A:	CJNE A, #00000100B, X3
+	MOV R2,#00H
+	;---------------
+	CLR A
+X3:	MOV A, ADRESHY
+	CJNE A, #00001100B, Y1
+	MOV R3, #0FFH
+	SJMP Y3
+Y1:	CJNE A, #00000000B, Y2
+	MOV R3, #01H
+	SJMP Y3
+Y2:	CJNE A, #00001000B, Y2A
+	MOV R3, #00H
+	SJMP Y3
+Y2A:	CJNE A, #00000100B, Y3
+	MOV R3,#00H
+
+; GET THE INTERESTED BITS TO PORTS FROM COLOR VALUES
+Y3:	MOV A, ADRESHC
+	MOV R0, #65H
+	MOV R1, #0AH
+N1:	INC R0
+	MOV B, @R0
+	CJNE A, B, SKIP1
+	DJNZ R1, N1
+
+	MOV A, ADRESHC
+	CLR C
+	RRC A
+	JNZ N
+	JNC SKIP1
+N:	MOV 20H, A
+	CPL A
+	MOV C, ACC.0
+	MOV RED, C
+	MOV C, ACC.1
+	MOV GREEN, C
+	MOV C, ACC.2
+	MOV BLUE, C
+	CLR C
+SKIP1:	MOV C, KEY
+	CPL C
+	MOV P1.6, C
+	MOV 24H.3, C
+	RET
+END	
